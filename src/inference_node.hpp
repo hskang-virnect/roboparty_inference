@@ -26,6 +26,7 @@
 #include <sensor_msgs/msg/joy.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <std_msgs/msg/float32_multi_array.hpp> 
+#include <std_msgs/msg/u_int8_multi_array.hpp>
 #include "utils/motion_loader.hpp"
 #include <std_srvs/srv/trigger.hpp>
 #include "robot_interface.hpp"
@@ -144,6 +145,13 @@ class InferenceNode : public rclcpp::Node {
             this->create_publisher<sensor_msgs::msg::Imu>("/imu", data_qos);
         joint_state_publisher_ =
             this->create_publisher<sensor_msgs::msg::JointState>("/joint_states", data_qos);
+        // Control mode state, so external nodes can tell whether interrupt / cmd_vel
+        // control is active. Latched-ish QoS (reliable, keep last) at 10 Hz.
+        control_mode_publisher_ = this->create_publisher<std_msgs::msg::UInt8MultiArray>(
+            "/control_mode_state", rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
+        control_mode_timer_ = this->create_wall_timer(
+            std::chrono::milliseconds(100),
+            std::bind(&InferenceNode::publish_control_mode, this));
         inference_thread_ = std::thread(&InferenceNode::inference, this);
         control_thread_ = std::thread(&InferenceNode::control, this);
 
@@ -200,6 +208,8 @@ class InferenceNode : public rclcpp::Node {
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr action_publisher_;
     rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_publisher_;
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_state_publisher_;
+    rclcpp::Publisher<std_msgs::msg::UInt8MultiArray>::SharedPtr control_mode_publisher_;
+    rclcpp::TimerBase::SharedPtr control_mode_timer_;
     std::thread inference_thread_;
     std::thread control_thread_;
     float act_alpha_;
@@ -289,6 +299,7 @@ class InferenceNode : public rclcpp::Node {
                             std::shared_ptr<std_srvs::srv::Trigger::Response> response);
     void publish_joint_states();
     void publish_action();
+    void publish_control_mode();
     void publish_imu();
     
     template <typename T>

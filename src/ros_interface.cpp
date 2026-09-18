@@ -499,6 +499,28 @@ void InferenceNode::publish_joint_states() {
     joint_state_publisher_->publish(joint_state_msg_);
 }
 
+void InferenceNode::publish_control_mode() {
+    // Layout is fixed and documented in the topic's dim label:
+    //   [0] interrupt mode enabled (arm targets from /joint_ref_states are applied)
+    //   [1] cmd_vel control (0 = joystick drives cmd_vel, 1 = /cmd_vel topic does)
+    //   [2] inference running
+    //   [3] motion policy active
+    // Published at 10 Hz regardless of inference state, so a consumer can distinguish
+    // "mode is off" from "node is not running".
+    std_msgs::msg::UInt8MultiArray msg;
+    msg.layout.dim.resize(1);
+    msg.layout.dim[0].label = "interrupt,cmd_vel_control,running,motion_policy";
+    msg.layout.dim[0].size = 4;
+    msg.layout.dim[0].stride = 4;
+    msg.data = {
+        static_cast<uint8_t>(is_interrupt_.load() ? 1 : 0),
+        static_cast<uint8_t>(is_joy_control_.load() ? 0 : 1),
+        static_cast<uint8_t>(is_running_.load() ? 1 : 0),
+        static_cast<uint8_t>(is_motion_policy_.load() ? 1 : 0),
+    };
+    control_mode_publisher_->publish(msg);
+}
+
 void InferenceNode::publish_action() {
     action_msg_.header.stamp = this->now();
     for (int i = 0; i < joint_num_; i++) {
