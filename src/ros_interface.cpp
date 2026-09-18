@@ -161,6 +161,17 @@ void InferenceNode::load_config() {
 }
 
 void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Joy> msg) {
+    // The handlers below index axes[2..5] and buttons[0..5] unconditionally. A shorter
+    // message (e.g. from a different gamepad driver or a hand-crafted publisher) would
+    // read out of bounds, so drop it instead.
+    constexpr size_t kRequiredAxes = 6;
+    constexpr size_t kRequiredButtons = 6;
+    if (msg->axes.size() < kRequiredAxes || msg->buttons.size() < kRequiredButtons) {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+            "Ignoring Joy message with %zu axes / %zu buttons (need %zu / %zu)",
+            msg->axes.size(), msg->buttons.size(), kRequiredAxes, kRequiredButtons);
+        return;
+    }
     if (is_joy_control_){
         std::unique_lock<std::mutex> lock(cmd_mutex_);
         cmd_vel_[0] = std::clamp(msg->axes[4] * clip_cmd_[1], clip_cmd_[0], clip_cmd_[1]);
@@ -289,6 +300,14 @@ void InferenceNode::subs_elevation_callback(const std::shared_ptr<std_msgs::msg:
 
 void InferenceNode::subs_joint_state_callback(const std::shared_ptr<sensor_msgs::msg::JointState> msg){
     if(supports_interrupt() && is_interrupt_.load()){
+        // position[] is read by index, so a short message would read out of bounds and
+        // silently command garbage to the arms.
+        if (msg->position.size() < interrupt_action_.size()) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                "Ignoring joint reference with %zu positions (need %zu)",
+                msg->position.size(), interrupt_action_.size());
+            return;
+        }
         std::unique_lock<std::mutex> lock(interrupt_mutex_);
         for(size_t i = 0; i < interrupt_action_.size(); i++){
             interrupt_action_[i] = msg->position[i];
