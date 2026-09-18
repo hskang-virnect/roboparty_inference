@@ -283,6 +283,8 @@ void InferenceNode::subs_cmd_callback(const std::shared_ptr<geometry_msgs::msg::
         cmd_vel_[0] = std::clamp(msg->linear.x, clip_cmd_[0], clip_cmd_[1]);
         cmd_vel_[1] = std::clamp(msg->linear.y, clip_cmd_[2], clip_cmd_[3]);
         cmd_vel_[2] = std::clamp(msg->angular.z, clip_cmd_[4], clip_cmd_[5]);
+        last_cmd_vel_time_ = std::chrono::steady_clock::now();
+        cmd_vel_received_ = true;
     }
 }
 
@@ -519,6 +521,33 @@ void InferenceNode::publish_control_mode() {
         static_cast<uint8_t>(is_motion_policy_.load() ? 1 : 0),
     };
     control_mode_publisher_->publish(msg);
+}
+
+void InferenceNode::set_cmd_vel_control_srv(const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+                                            std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
+    if (is_running_.load()) {
+        response->success = false;
+        response->message = "Input mode can change only while inference is stopped";
+        return;
+    }
+    std::unique_lock<std::mutex> lock(cmd_mutex_);
+    is_joy_control_.store(!request->data);
+    std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
+    cmd_vel_received_ = false;
+    response->success = true;
+    response->message = request->data ? "Controlled by /cmd_vel" : "Controlled by joy";
+    RCLCPP_INFO(this->get_logger(), "%s", response->message.c_str());
+}
+
+void InferenceNode::cmd_vel_watchdog() {
+    if (is_joy_control_.load()) {
+        return;
+    }
+    std::unique_lock<std::mutex> lock(cmd_mutex_);
+    if (!cmd_vel_received_ || std::chrono::steady_clock::now() - last_cmd_vel_time_ > kCmdVelTimeout) {
+        std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
+        cmd_vel_received_ = false;
+    }
 }
 
 void InferenceNode::publish_action() {

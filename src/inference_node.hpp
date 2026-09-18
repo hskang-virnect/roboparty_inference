@@ -29,6 +29,7 @@
 #include <std_msgs/msg/u_int8_multi_array.hpp>
 #include "utils/motion_loader.hpp"
 #include <std_srvs/srv/trigger.hpp>
+#include <std_srvs/srv/set_bool.hpp>
 #include "robot_interface.hpp"
 
 enum class ObsStackOrder {
@@ -175,6 +176,12 @@ class InferenceNode : public rclcpp::Node {
             "start_inference", std::bind(&InferenceNode::start_inference_srv, this, std::placeholders::_1, std::placeholders::_2));
         stop_inference_service_ = this->create_service<std_srvs::srv::Trigger>(
             "stop_inference", std::bind(&InferenceNode::stop_inference_srv, this, std::placeholders::_1, std::placeholders::_2));
+        // Explicit input selection for external controllers (no synthetic /joy),
+        // and a /cmd_vel expiry so a lost publisher cannot keep the last velocity.
+        set_cmd_vel_control_service_ = this->create_service<std_srvs::srv::SetBool>(
+            "set_cmd_vel_control", std::bind(&InferenceNode::set_cmd_vel_control_srv, this, std::placeholders::_1, std::placeholders::_2));
+        cmd_vel_watchdog_timer_ = this->create_wall_timer(
+            std::chrono::milliseconds(50), std::bind(&InferenceNode::cmd_vel_watchdog, this));
     }
     ~InferenceNode() {
         if (inference_thread_.joinable()) {
@@ -223,6 +230,11 @@ class InferenceNode : public rclcpp::Node {
     int last_button0_ = 0, last_button1_ = 0, last_button2_ = 0, last_button3_ = 0, last_button4_ = 0, last_button5_ = 0;
     std::vector<PolicyRuntime> policies_;
     std::vector<int> motion_policy_indices_;
+    rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr set_cmd_vel_control_service_;
+    rclcpp::TimerBase::SharedPtr cmd_vel_watchdog_timer_;
+    static constexpr std::chrono::milliseconds kCmdVelTimeout{500};
+    std::chrono::steady_clock::time_point last_cmd_vel_time_{};
+    bool cmd_vel_received_ = false;  // guarded by cmd_mutex_
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_joints_service_, set_zeros_service_, clear_errors_service_, refresh_joints_service_, read_joints_service_, read_imu_service_, init_motors_service_, deinit_motors_service_, start_inference_service_, stop_inference_service_;
 
     std::mutex act_mutex_, perception_mutex_, interrupt_mutex_, cmd_mutex_, mode_mutex_, lb_switch_mutex_;
@@ -300,6 +312,9 @@ class InferenceNode : public rclcpp::Node {
     void publish_joint_states();
     void publish_action();
     void publish_control_mode();
+    void set_cmd_vel_control_srv(const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+                                 std::shared_ptr<std_srvs::srv::SetBool::Response> response);
+    void cmd_vel_watchdog();
     void publish_imu();
     
     template <typename T>
