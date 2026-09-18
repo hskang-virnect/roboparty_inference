@@ -150,9 +150,6 @@ class InferenceNode : public rclcpp::Node {
         // control is active. Latched-ish QoS (reliable, keep last) at 10 Hz.
         control_mode_publisher_ = this->create_publisher<std_msgs::msg::UInt8MultiArray>(
             "/control_mode_state", rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
-        control_mode_timer_ = this->create_wall_timer(
-            std::chrono::milliseconds(100),
-            std::bind(&InferenceNode::publish_control_mode, this));
         inference_thread_ = std::thread(&InferenceNode::inference, this);
         control_thread_ = std::thread(&InferenceNode::control, this);
 
@@ -216,7 +213,9 @@ class InferenceNode : public rclcpp::Node {
     rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_publisher_;
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_state_publisher_;
     rclcpp::Publisher<std_msgs::msg::UInt8MultiArray>::SharedPtr control_mode_publisher_;
-    rclcpp::TimerBase::SharedPtr control_mode_timer_;
+    // Published from the real-time control thread: while motors are active the
+    // node's executor is delayed enough that a wall timer drops to about 1 Hz.
+    int control_mode_ticks_ = 0;
     std::thread inference_thread_;
     std::thread control_thread_;
     float act_alpha_;

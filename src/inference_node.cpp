@@ -245,6 +245,10 @@ void InferenceNode::control() {
         auto loop_start = std::chrono::steady_clock::now();
         try {
             apply_action();
+            if (++control_mode_ticks_ >= static_cast<int>(0.1 / dt_)) {
+                control_mode_ticks_ = 0;
+                publish_control_mode();
+            }
         } catch (const std::exception& e) {
             RCLCPP_FATAL(this->get_logger(), "Exception in control thread: %s", e.what());
             rclcpp::shutdown();
